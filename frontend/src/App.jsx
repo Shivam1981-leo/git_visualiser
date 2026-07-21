@@ -12,7 +12,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import dagre from 'dagre';
-import { Github, Download, X, GitCommit as GitCommitIcon, GitPullRequest } from 'lucide-react';
+import { GitGraph, Download, X, GitCommit as GitCommitIcon, GitPullRequest } from 'lucide-react';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api/repo';
 
@@ -163,7 +163,7 @@ export default function App() {
       {/* GitHub Style Sidebar */}
       <div className="sidebar">
         <div className="branding">
-          <Github size={24} />
+          <GitGraph size={24} />
           Git Visualiser
         </div>
         
