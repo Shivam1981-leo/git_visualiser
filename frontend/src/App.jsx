@@ -18,6 +18,12 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api
 
 // Custom Node Component (GitHub Style)
 const CommitNode = ({ data }) => {
+  // Parse refs string like "(HEAD -> main, origin/main)"
+  const refsRaw = data.refs ? data.refs.trim() : '';
+  const refList = refsRaw.startsWith('(') && refsRaw.endsWith(')') 
+    ? refsRaw.slice(1, -1).split(',').map(r => r.trim()).filter(Boolean)
+    : [];
+
   return (
     <div className="commit-node">
       <Handle type="target" position={Position.Top} style={{ background: '#30363d', width: '8px', height: '8px', border: 'none' }} />
@@ -25,6 +31,23 @@ const CommitNode = ({ data }) => {
         <div className="message" title={data.label}>{data.label}</div>
         <div className="hash">{data.hash.substring(0, 7)}</div>
       </div>
+      {refList.length > 0 && (
+        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginBottom: '8px' }}>
+          {refList.map((ref, i) => (
+            <span key={i} style={{ 
+              fontSize: '10px', 
+              padding: '2px 6px', 
+              borderRadius: '12px', 
+              border: '1px solid var(--border-default)', 
+              color: 'var(--text-secondary)',
+              backgroundColor: ref.includes('HEAD') ? 'rgba(88, 166, 255, 0.1)' : 'transparent',
+              borderColor: ref.includes('HEAD') ? 'var(--link-color)' : 'var(--border-default)'
+            }}>
+              {ref}
+            </span>
+          ))}
+        </div>
+      )}
       <div className="author-info">
         <div className="avatar"></div>
         <span className="author-name">{data.author}</span>
