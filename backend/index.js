@@ -3,6 +3,7 @@ const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 const simpleGit = require('simple-git');
+const crypto = require('crypto');
 
 const app = express();
 app.use(cors());
@@ -16,40 +17,58 @@ if (!fs.existsSync(REPOS_DIR)) {
   fs.mkdirSync(REPOS_DIR, { recursive: true });
 }
 
-// In-memory state for current repo path
-let currentRepoPath = null;
-let git = null;
+// Cleanup function to delete session folders older than 1 hour
+const cleanupOldSessions = () => {
+  if (!fs.existsSync(REPOS_DIR)) return;
+  const now = Date.now();
+  const ONE_HOUR = 60 * 60 * 1000;
 
-// Helper to clear temporary repos
-const clearTempRepos = () => {
-  if (fs.existsSync(REPOS_DIR)) {
-    fs.rmSync(REPOS_DIR, { recursive: true, force: true });
-    fs.mkdirSync(REPOS_DIR, { recursive: true });
-  }
+  const sessions = fs.readdirSync(REPOS_DIR);
+  sessions.forEach(session => {
+    const sessionPath = path.join(REPOS_DIR, session);
+    const stats = fs.statSync(sessionPath);
+    if (now - stats.mtimeMs > ONE_HOUR) {
+      console.log(`Cleaning up old session: ${session}`);
+      fs.rmSync(sessionPath, { recursive: true, force: true });
+    }
+  });
 };
 
+const getGitInstance = (sessionId, repoName) => {
+    if (!sessionId || !repoName) return null;
+    const repoPath = path.join(REPOS_DIR, sessionId, repoName);
+    if (!fs.existsSync(repoPath)) return null;
+    return simpleGit(repoPath);
+}
+
 app.post('/api/repo/clone', async (req, res) => {
-  const { url } = req.body;
-  if (!url) {
-    return res.status(400).json({ error: 'Repo URL is required' });
+  const { url, sessionId } = req.body;
+  if (!url || !sessionId) {
+    return res.status(400).json({ error: 'Repo URL and sessionId are required' });
   }
 
   try {
-    clearTempRepos();
+    // Run background cleanup for disk space
+    cleanupOldSessions();
+
     const repoName = url.split('/').pop().replace('.git', '');
-    const clonePath = path.join(REPOS_DIR, repoName);
+    const sessionDir = path.join(REPOS_DIR, sessionId);
+    const clonePath = path.join(sessionDir, repoName);
+    
+    // Clean specific session if exists to avoid conflicts on re-clone
+    if (fs.existsSync(sessionDir)) {
+      fs.rmSync(sessionDir, { recursive: true, force: true });
+    }
+    fs.mkdirSync(sessionDir, { recursive: true });
     
     // Initialize simple-git
     const baseGit = simpleGit();
     
-    console.log(`Cloning ${url} to ${clonePath}...`);
+    console.log(`[${sessionId}] Cloning ${url} to ${clonePath}...`);
     await baseGit.clone(url, clonePath);
-    console.log('Cloned successfully.');
+    console.log(`[${sessionId}] Cloned successfully.`);
 
-    currentRepoPath = clonePath;
-    git = simpleGit(currentRepoPath);
-
-    res.json({ message: 'Repository cloned successfully', name: repoName });
+    res.json({ message: 'Repository cloned successfully', name: repoName, sessionId });
   } catch (error) {
     console.error('Error cloning repo:', error);
     res.status(500).json({ error: 'Failed to clone repository', details: error.message });
@@ -57,9 +76,9 @@ app.post('/api/repo/clone', async (req, res) => {
 });
 
 app.get('/api/repo/commits', async (req, res) => {
-  if (!git) {
-    return res.status(400).json({ error: 'No repository currently loaded' });
-  }
+  const { sessionId, repoName } = req.query;
+  const git = getGitInstance(sessionId, repoName);
+  if (!git) return res.status(400).json({ error: 'No repository currently loaded for this session' });
 
   try {
     const logOptions = {
@@ -74,12 +93,11 @@ app.get('/api/repo/commits', async (req, res) => {
 });
 
 app.get('/api/repo/graph', async (req, res) => {
-    if (!git) return res.status(400).json({ error: 'No repository currently loaded' });
+    const { sessionId, repoName } = req.query;
+    const git = getGitInstance(sessionId, repoName);
+    if (!git) return res.status(400).json({ error: 'No repository currently loaded for this session' });
+
     try {
-        const log = await git.log(['--all']);
-        
-        // simple-git log object includes hash, date, message, refs, body, author_name, author_email
-        // We will transform this into nodes and edges for React Flow
         const nodes = [];
         const edges = [];
         
@@ -100,7 +118,7 @@ app.get('/api/repo/graph', async (req, res) => {
                 if (parent) {
                     edges.push({
                         id: `e-${hash}-${parent}`,
-                        source: parent, // Parent to child (or child to parent depending on flow direction)
+                        source: parent,
                         target: hash,
                     });
                 }
@@ -115,10 +133,11 @@ app.get('/api/repo/graph', async (req, res) => {
 });
 
 app.get('/api/repo/contributors', async (req, res) => {
-  if (!git) return res.status(400).json({ error: 'No repository currently loaded' });
+    const { sessionId, repoName } = req.query;
+    const git = getGitInstance(sessionId, repoName);
+    if (!git) return res.status(400).json({ error: 'No repository currently loaded for this session' });
 
   try {
-    // get shortlog to count commits
     const shortlog = await git.raw(['shortlog', '-s', '-n', '--all']);
     const contributors = shortlog.split('\n')
       .filter(line => line.trim())
@@ -135,7 +154,9 @@ app.get('/api/repo/contributors', async (req, res) => {
 });
 
 app.get('/api/repo/diff/:hash', async (req, res) => {
-    if (!git) return res.status(400).json({ error: 'No repository currently loaded' });
+    const { sessionId, repoName } = req.query;
+    const git = getGitInstance(sessionId, repoName);
+    if (!git) return res.status(400).json({ error: 'No repository currently loaded for this session' });
     
     try {
         const hash = req.params.hash;
@@ -146,6 +167,17 @@ app.get('/api/repo/diff/:hash', async (req, res) => {
         console.error('Error fetching diff:', error);
         res.status(500).json({ error: 'Failed to fetch diff' });
     }
+});
+
+app.delete('/api/repo/session', (req, res) => {
+    const { sessionId } = req.query;
+    if (sessionId) {
+        const sessionDir = path.join(REPOS_DIR, sessionId);
+        if (fs.existsSync(sessionDir)) {
+            fs.rmSync(sessionDir, { recursive: true, force: true });
+        }
+    }
+    res.json({ success: true });
 });
 
 

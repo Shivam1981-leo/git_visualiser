@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import {
   ReactFlow,
@@ -12,22 +12,25 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import dagre from 'dagre';
-import { GitCommit, Download, X } from 'lucide-react';
+import { Github, Download, X, GitCommit as GitCommitIcon, GitPullRequest } from 'lucide-react';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api/repo';
 
-// Custom Node Component
+// Custom Node Component (GitHub Style)
 const CommitNode = ({ data }) => {
   return (
     <div className="commit-node">
-      <Handle type="target" position={Position.Top} />
-      <div className="hash">{data.hash.substring(0, 7)}</div>
-      <div className="message">{data.label}</div>
-      <div className="author">
-        <span>{data.author}</span>
-        <span>{data.date.split(' ')[0]}</span>
+      <Handle type="target" position={Position.Top} style={{ background: '#30363d', width: '8px', height: '8px', border: 'none' }} />
+      <div className="node-header">
+        <div className="message" title={data.label}>{data.label}</div>
+        <div className="hash">{data.hash.substring(0, 7)}</div>
       </div>
-      <Handle type="source" position={Position.Bottom} />
+      <div className="author-info">
+        <div className="avatar"></div>
+        <span className="author-name">{data.author}</span>
+        <span>committed on {data.date.split(' ')[0]}</span>
+      </div>
+      <Handle type="source" position={Position.Bottom} style={{ background: '#30363d', width: '8px', height: '8px', border: 'none' }} />
     </div>
   );
 };
@@ -40,10 +43,10 @@ const getLayoutedElements = (nodes, edges, direction = 'TB') => {
   const dagreGraph = new dagre.graphlib.Graph();
   dagreGraph.setDefaultEdgeLabel(() => ({}));
   
-  const nodeWidth = 260;
-  const nodeHeight = 100;
+  const nodeWidth = 280;
+  const nodeHeight = 80;
   
-  dagreGraph.setGraph({ rankdir: direction, nodesep: 50, ranksep: 100 });
+  dagreGraph.setGraph({ rankdir: direction, nodesep: 50, ranksep: 80 });
 
   nodes.forEach((node) => {
     dagreGraph.setNode(node.id, { width: nodeWidth, height: nodeHeight });
@@ -78,21 +81,41 @@ export default function App() {
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [contributors, setContributors] = useState([]);
   
+  const [sessionId, setSessionId] = useState(null);
+  const [currentRepoName, setCurrentRepoName] = useState(null);
+  
   const [selectedCommit, setSelectedCommit] = useState(null);
   const [commitDiff, setCommitDiff] = useState(null);
 
+  // Initialize a session ID when the app loads
+  useEffect(() => {
+    if (!sessionId) {
+      setSessionId(crypto.randomUUID());
+    }
+    
+    // Cleanup on unmount/refresh
+    const handleUnload = () => {
+      if (sessionId) {
+        navigator.sendBeacon(`${API_BASE}/session?sessionId=${sessionId}`);
+      }
+    };
+    window.addEventListener('beforeunload', handleUnload);
+    return () => window.removeEventListener('beforeunload', handleUnload);
+  }, [sessionId]);
+
   const handleClone = async () => {
-    if (!repoUrl) return;
+    if (!repoUrl || !sessionId) return;
     setLoading(true);
     try {
-      await axios.post(`${API_BASE}/clone`, { url: repoUrl });
+      const res = await axios.post(`${API_BASE}/clone`, { url: repoUrl, sessionId });
+      const repoName = res.data.name;
+      setCurrentRepoName(repoName);
       
       const [graphRes, contribRes] = await Promise.all([
-        axios.get(`${API_BASE}/graph`),
-        axios.get(`${API_BASE}/contributors`)
+        axios.get(`${API_BASE}/graph`, { params: { sessionId, repoName } }),
+        axios.get(`${API_BASE}/contributors`, { params: { sessionId, repoName } })
       ]);
       
-      // format nodes for React flow
       const formattedNodes = graphRes.data.nodes.map(n => ({
         ...n,
         type: 'commit',
@@ -103,8 +126,15 @@ export default function App() {
         graphRes.data.edges
       );
       
+      // Style the edges to match GitHub's network graph subtle lines
+      const styledEdges = layoutedEdges.map(e => ({
+        ...e,
+        style: { stroke: '#30363d', strokeWidth: 2 },
+        animated: false
+      }));
+      
       setNodes(layoutedNodes);
-      setEdges(layoutedEdges);
+      setEdges(styledEdges);
       setContributors(contribRes.data);
       
     } catch (err) {
@@ -119,7 +149,9 @@ export default function App() {
     try {
       setSelectedCommit(node.data);
       setCommitDiff(null);
-      const res = await axios.get(`${API_BASE}/diff/${node.data.hash}`);
+      const res = await axios.get(`${API_BASE}/diff/${node.data.hash}`, { 
+        params: { sessionId, repoName: currentRepoName } 
+      });
       setCommitDiff(res.data);
     } catch (err) {
       console.error(err);
@@ -128,11 +160,11 @@ export default function App() {
 
   return (
     <div className="app-container">
-      {/* Sidebar */}
-      <div className="sidebar glass-panel">
+      {/* GitHub Style Sidebar */}
+      <div className="sidebar">
         <div className="branding">
-          <GitCommit size={32} color="#c084fc" />
-          <h1>Git Vis</h1>
+          <Github size={24} />
+          Git Visualiser
         </div>
         
         <div className="input-section">
@@ -146,18 +178,21 @@ export default function App() {
             />
           </div>
           <button className="btn-primary" onClick={handleClone} disabled={loading}>
-            <Download size={18} />
-            {loading ? 'Processing...' : 'Load Repository'}
+            <Download size={16} />
+            {loading ? 'Cloning repository...' : 'Load Repository'}
           </button>
         </div>
         
         {contributors.length > 0 && (
           <div className="stats-section">
-            <h3>Top Contributors</h3>
+            <h3>Contributors</h3>
             <div className="contributor-list">
-              {contributors.sort((a,b) => b.commits - a.commits).slice(0, 10).map((c, i) => (
+              {contributors.sort((a,b) => b.commits - a.commits).slice(0, 15).map((c, i) => (
                 <div key={i} className="contributor-item">
-                  <span className="contributor-name">{c.name}</span>
+                  <span className="contributor-name">
+                    <div className="avatar"></div>
+                    {c.name}
+                  </span>
                   <span className="contributor-commits">{c.commits}</span>
                 </div>
               ))}
@@ -166,8 +201,8 @@ export default function App() {
         )}
       </div>
 
-      {/* Main Content Area */}
-      <div className="main-content glass-panel">
+      {/* Main Graph Content */}
+      <div className="main-content">
         {nodes.length > 0 ? (
           <ReactFlow
             nodes={nodes}
@@ -178,22 +213,26 @@ export default function App() {
             nodeTypes={nodeTypes}
             fitView
           >
-            <Controls />
+            <Controls style={{ background: '#161b22', borderColor: '#30363d', fill: '#c9d1d9' }} />
             <MiniMap 
-                nodeStrokeColor="#c084fc" 
-                nodeColor="#1e293b" 
-                maskColor="rgba(0,0,0,0.5)"
+                nodeStrokeColor="#30363d" 
+                nodeColor="#161b22" 
+                maskColor="rgba(13,17,23,0.8)"
+                style={{ backgroundColor: '#0d1117', border: '1px solid #30363d' }}
             />
-            <Background color="#334155" gap={16} />
+            <Background color="#30363d" gap={20} size={1} />
           </ReactFlow>
         ) : (
           <div style={{display:'flex', height:'100%', alignItems:'center', justifyContent:'center', color:'var(--text-secondary)'}}>
-            Load a repository to view the graph
+            <div style={{textAlign: 'center'}}>
+              <GitPullRequest size={48} style={{marginBottom: '16px', opacity: 0.5}} />
+              <p>Enter a Git repository URL to visualize its history.</p>
+            </div>
           </div>
         )}
 
-        {/* Side Panel */}
-        <div className={`side-panel glass-panel ${selectedCommit ? 'open' : ''}`}>
+        {/* Side Panel for Diff Details */}
+        <div className={`side-panel ${selectedCommit ? 'open' : ''}`}>
           <div className="panel-header">
             <h2>Commit Details</h2>
             <button className="close-btn" onClick={() => setSelectedCommit(null)}>
@@ -204,26 +243,33 @@ export default function App() {
           <div className="panel-content">
             {selectedCommit && (
               <>
-                <h3 style={{marginBottom: '8px', color: 'var(--accent)'}}>
-                    {selectedCommit.hash}
-                </h3>
-                <p style={{marginBottom: '4px', fontWeight: 600}}>
-                    {selectedCommit.label}
-                </p>
-                <p style={{marginBottom: '20px', fontSize: '0.85rem', color: 'var(--text-secondary)'}}>
-                    By {selectedCommit.author} on {selectedCommit.date}
-                </p>
+                <div className="commit-meta-box">
+                  <h3 style={{marginBottom: '8px', color: 'var(--text-primary)', fontSize: '18px'}}>
+                      {selectedCommit.label}
+                  </h3>
+                  <div style={{display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px'}}>
+                    <div className="avatar"></div>
+                    <span style={{fontWeight: 600, fontSize: '14px'}}>{selectedCommit.author}</span>
+                    <span style={{color: 'var(--text-secondary)', fontSize: '14px'}}>committed on {selectedCommit.date}</span>
+                  </div>
+                  <div style={{display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--text-secondary)'}}>
+                    <GitCommitIcon size={14} />
+                    <span>{selectedCommit.hash}</span>
+                  </div>
+                </div>
                 
                 {commitDiff ? (
                   <>
-                    <h4>Files Changed</h4>
+                    <h4 style={{fontSize: '14px', marginBottom: '8px', color: 'var(--text-primary)'}}>Changed files</h4>
                     <div className="diff-stat">{commitDiff.summary}</div>
                     
-                    <h4>Diff</h4>
-                    <div className="diff-content">{commitDiff.diff}</div>
+                    <div className="diff-container">
+                      <div className="diff-header">Code Changes</div>
+                      <div className="diff-content">{commitDiff.diff}</div>
+                    </div>
                   </>
                 ) : (
-                  <div>Loading diff...</div>
+                  <div style={{color: 'var(--text-secondary)'}}>Loading diff...</div>
                 )}
               </>
             )}
