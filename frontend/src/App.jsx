@@ -151,6 +151,9 @@ export default function App() {
   // PRs State
   const [pullRequests, setPullRequests] = useState([]);
 
+  // Recent Repos State
+  const [recentRepos, setRecentRepos] = useState([]);
+
   useEffect(() => { document.body.className = theme === 'light' ? 'theme-light' : 'theme-dark'; }, [theme]);
 
   useEffect(() => {
@@ -168,12 +171,14 @@ export default function App() {
 
   useEffect(() => {
       const fetchProfile = async () => {
-          if (!token) { setUserProfile(null); return; }
+          if (!token) { setUserProfile(null); setRecentRepos([]); return; }
           try {
               const res = await axios.get(`${API_BASE}/auth/user`, { headers: getHeaders() });
               setUserProfile(res.data);
+              const saved = localStorage.getItem(`recent_repos_${res.data.login}`);
+              if (saved) setRecentRepos(JSON.parse(saved));
           } catch (e) {
-              console.error("Token invalid"); setToken(''); localStorage.removeItem('github_token');
+              console.error("Token invalid"); setToken(''); localStorage.removeItem('github_token'); setRecentRepos([]);
           }
       };
       fetchProfile();
@@ -248,6 +253,13 @@ export default function App() {
       
       setNodes(layoutedNodes); setEdges(styledEdges);
       setContributors(contribRes.data); setAnalytics(graphRes.data.analytics || []);
+      
+      // Save to recent repos
+      if (userProfile) {
+          const newRecent = [{ name: repoName, url: repoUrl }, ...recentRepos.filter(r => r.name !== repoName)].slice(0, 5);
+          setRecentRepos(newRecent);
+          localStorage.setItem(`recent_repos_${userProfile.login}`, JSON.stringify(newRecent));
+      }
       
       setActiveTab('graph');
       
@@ -512,6 +524,24 @@ export default function App() {
                     <Download size={16} />{loading ? 'Fetching...' : 'Load Repository'}
                 </button>
             </div>
+
+            {recentRepos.length > 0 && (
+                <div style={{ marginTop: '24px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '12px', display: 'block' }}>Recent Repositories</label>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        {recentRepos.map((r, i) => (
+                            <button 
+                                key={i} 
+                                className="btn-secondary" 
+                                style={{ textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                onClick={() => { setRepoUrl(r.url); setTimeout(() => document.querySelector('.input-section .btn-primary').click(), 100); }}
+                            >
+                                {r.name}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            )}
         </div>
       </div>
 
