@@ -64,8 +64,8 @@ app.post('/api/repo/clone', async (req, res) => {
     // Initialize simple-git
     const baseGit = simpleGit();
     
-    console.log(`[${sessionId}] Cloning ${url} to ${clonePath}...`);
-    await baseGit.clone(url, clonePath);
+    console.log(`[${sessionId}] Cloning ${url} to ${clonePath} (no-checkout, blobless)...`);
+    await baseGit.clone(url, clonePath, ['--no-checkout', '--filter=blob:none']);
     console.log(`[${sessionId}] Cloned successfully.`);
 
     res.json({ message: 'Repository cloned successfully', name: repoName, sessionId });
