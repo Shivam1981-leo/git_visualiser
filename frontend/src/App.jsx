@@ -265,7 +265,8 @@ export default function App() {
       try {
           if (tab === 'explorer' && fileTree.length === 0) {
               const res = await axios.get(`${API_BASE}/repo/tree`, { params: { repoName: currentRepoName, branch: defaultBranch }, headers: getHeaders() });
-              setFileTree(res.data.filter(f => f.type === 'blob' || f.type === 'tree').sort((a,b) => a.type === 'tree' ? -1 : 1));
+              // Only show files (blobs), ignore directories since we get a flat recursive list
+              setFileTree(res.data.filter(f => f.type === 'blob'));
           } else if (tab === 'prs' && pullRequests.length === 0) {
               const res = await axios.get(`${API_BASE}/repo/prs`, { params: { repoName: currentRepoName }, headers: getHeaders() });
               setPullRequests(res.data);
@@ -279,8 +280,18 @@ export default function App() {
       setSelectedFile(path); setFileContent('Loading...');
       try {
           const res = await axios.get(`${API_BASE}/repo/file`, { params: { repoName: currentRepoName, path }, headers: getHeaders() });
-          setFileContent(atob(res.data.content)); // Base64 decode
-      } catch (e) { setFileContent('Failed to load file content.'); }
+          if (res.data.content) {
+              // Clean up base64 string (GitHub includes newlines) and decode UTF-8 safely
+              const cleanBase64 = res.data.content.replace(/\s/g, '');
+              const decoded = decodeURIComponent(escape(atob(cleanBase64)));
+              setFileContent(decoded);
+          } else {
+              setFileContent('File has no content or is too large.');
+          }
+      } catch (e) { 
+          console.error(e);
+          setFileContent(`Failed to load file content. (Ensure backend has finished deploying!)`); 
+      }
   };
 
   const onNodeClick = async (_, node) => {
