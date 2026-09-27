@@ -15,7 +15,9 @@ import dagre from 'dagre';
 import { GitGraph, Download, X, GitCommit as GitCommitIcon, GitPullRequest, LogIn, LogOut, Activity } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api';
+const RAW_API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api';
+// Normalize API base just in case it was set to /api/repo previously
+const API_BASE = RAW_API_BASE.replace(/\/repo\/?$/, '');
 
 // Custom Node Component (GitHub Style)
 const CommitNode = ({ data }) => {
