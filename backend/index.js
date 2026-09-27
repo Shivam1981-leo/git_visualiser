@@ -107,6 +107,38 @@ app.get('/api/repo/info', async (req, res) => {
     }
 });
 
+// File Explorer Endpoints
+app.get('/api/repo/tree', async (req, res) => {
+    const { repoName, branch } = req.query;
+    try {
+        const { data } = await axios.get(`https://api.github.com/repos/${repoName}/git/trees/${branch}?recursive=1`, { headers: getAuthHeaders(req) });
+        res.json(data.tree);
+    } catch (e) {
+        res.status(500).json({ error: 'Failed to fetch repo tree' });
+    }
+});
+
+app.get('/api/repo/file', async (req, res) => {
+    const { repoName, path } = req.query;
+    try {
+        const { data } = await axios.get(`https://api.github.com/repos/${repoName}/contents/${path}`, { headers: getAuthHeaders(req) });
+        res.json(data);
+    } catch (e) {
+        res.status(500).json({ error: 'Failed to fetch file' });
+    }
+});
+
+// Pull Requests Endpoint
+app.get('/api/repo/prs', async (req, res) => {
+    const { repoName } = req.query;
+    try {
+        const { data } = await axios.get(`https://api.github.com/repos/${repoName}/pulls?state=all&per_page=30`, { headers: getAuthHeaders(req) });
+        res.json(data);
+    } catch (e) {
+        res.status(500).json({ error: 'Failed to fetch PRs' });
+    }
+});
+
 app.post('/api/repo/clone', async (req, res) => {
   const { url, sessionId } = req.body;
   if (!url) {
