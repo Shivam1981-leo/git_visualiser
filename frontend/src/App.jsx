@@ -286,7 +286,7 @@ export default function App() {
       
       if (activeTab === 'graph') {
           return (
-              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ flex: 1, position: 'relative' }}>
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ height: '100%', width: '100%', position: 'relative' }}>
                   {nodes.length > 0 ? (
                       <ReactFlow
                           nodes={nodes}
