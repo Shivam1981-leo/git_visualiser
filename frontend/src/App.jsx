@@ -15,10 +15,11 @@ import dagre from 'dagre';
 import { 
     GitGraph, Download, X, GitCommit as GitCommitIcon, 
     GitPullRequest, LogIn, LogOut, Activity, 
-    PieChart, Info, BookOpen, Star, GitFork, User
+    PieChart, Info, BookOpen, Star, GitFork, User, Search
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, AreaChart, Area } from 'recharts';
 import { motion, AnimatePresence } from 'framer-motion';
+import { toPng } from 'html-to-image';
 
 const RAW_API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api';
 const API_BASE = RAW_API_BASE.replace(/\/repo\/?$/, '');
@@ -30,8 +31,34 @@ const CommitNode = ({ data }) => {
     ? refsRaw.slice(1, -1).split(',').map(r => r.trim()).filter(Boolean)
     : [];
 
+  // Color-coded branches
+  let borderColor = 'var(--border-default)';
+  let glowColor = 'transparent';
+  if (refsRaw.includes('HEAD')) {
+      borderColor = '#58a6ff'; // Blue for main/HEAD
+      glowColor = 'rgba(88, 166, 255, 0.3)';
+  } else if (refsRaw.includes('feat') || refsRaw.includes('feature')) {
+      borderColor = '#d2a8ff'; // Purple for features
+      glowColor = 'rgba(210, 168, 255, 0.3)';
+  } else if (refsRaw.includes('fix') || refsRaw.includes('bug')) {
+      borderColor = '#f85149'; // Red for fixes
+      glowColor = 'rgba(248, 81, 73, 0.3)';
+  } else if (refsRaw.includes('origin/')) {
+      borderColor = '#3fb950'; // Green for other remote branches
+      glowColor = 'rgba(63, 185, 80, 0.3)';
+  }
+
+  const containerStyle = {
+      opacity: data.isDimmed ? 0.3 : 1,
+      transform: data.isHighlighted ? 'scale(1.05)' : 'scale(1)',
+      borderColor: data.isHighlighted ? '#fff' : borderColor,
+      boxShadow: data.isHighlighted ? `0 0 20px rgba(255,255,255,0.5)` : `0 4px 12px rgba(0,0,0,0.2), 0 0 10px ${glowColor}`,
+      zIndex: data.isHighlighted ? 10 : 1,
+      transition: 'all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)'
+  };
+
   return (
-    <div className="commit-node">
+    <div className="commit-node" style={containerStyle}>
       <Handle type="target" position={Position.Top} style={{ background: '#30363d', width: '8px', height: '8px', border: 'none' }} />
       <div className="node-header">
         <div className="message" title={data.label}>{data.label}</div>
@@ -54,9 +81,17 @@ const CommitNode = ({ data }) => {
           ))}
         </div>
       )}
-      <div className="author-info">
-        <span className="author-name">{data.author}</span>
-        <span>committed on {data.date.split('T')[0]}</span>
+      <div className="author-info" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <img 
+            src={`https://github.com/${data.author}.png?size=40`} 
+            alt={data.author} 
+            style={{ width: '28px', height: '28px', borderRadius: '50%', border: '1px solid var(--border-default)' }}
+            onError={(e) => { e.target.style.display = 'none'; }}
+        />
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+            <span className="author-name">{data.author}</span>
+            <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>{data.date.split('T')[0]}</span>
+        </div>
       </div>
       <Handle type="source" position={Position.Bottom} style={{ background: '#30363d', width: '8px', height: '8px', border: 'none' }} />
     </div>
@@ -72,7 +107,7 @@ const getLayoutedElements = (nodes, edges, direction = 'TB') => {
   dagreGraph.setDefaultEdgeLabel(() => ({}));
   
   const nodeWidth = 280;
-  const nodeHeight = 80;
+  const nodeHeight = 100; // Increased to fit avatars
   
   dagreGraph.setGraph({ rankdir: direction, nodesep: 50, ranksep: 80 });
 
@@ -121,6 +156,7 @@ export default function App() {
   const [userProfile, setUserProfile] = useState(null);
 
   const [activeTab, setActiveTab] = useState('overview'); // overview, graph, analytics
+  const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
@@ -160,6 +196,18 @@ export default function App() {
       fetchProfile();
   }, [token, getHeaders]);
 
+  // Handle Search Graph Highlighting
+  useEffect(() => {
+      setNodes((nds) => nds.map((n) => {
+          const query = searchQuery.trim().toLowerCase();
+          if (!query) {
+              return { ...n, data: { ...n.data, isDimmed: false, isHighlighted: false } };
+          }
+          const match = n.data.label.toLowerCase().includes(query) || n.data.author.toLowerCase().includes(query) || n.data.hash.toLowerCase().includes(query);
+          return { ...n, data: { ...n.data, isDimmed: !match, isHighlighted: match } };
+      }));
+  }, [searchQuery, setNodes]);
+
   const handleLogin = () => {
     window.location.href = `${API_BASE}/auth/github`;
   };
@@ -175,6 +223,7 @@ export default function App() {
     setLoading(true);
     setRepoInfo(null);
     setNodes([]);
+    setSearchQuery('');
     try {
       const res = await axios.post(`${API_BASE}/repo/clone`, 
         { url: repoUrl, sessionId }, 
@@ -203,7 +252,7 @@ export default function App() {
       
       const styledEdges = layoutedEdges.map(e => ({
         ...e,
-        style: { stroke: '#58a6ff', strokeWidth: 1.5, opacity: 0.6 },
+        style: { stroke: '#58a6ff', strokeWidth: 2, opacity: 0.6 },
         animated: true
       }));
       
@@ -239,6 +288,20 @@ export default function App() {
       console.error(err);
     }
   };
+
+  const handleDownloadImage = useCallback(() => {
+    const el = document.querySelector('.react-flow');
+    if (!el) return;
+    toPng(el, { backgroundColor: '#0d1117' }).then((dataUrl) => {
+      const a = document.createElement('a');
+      a.setAttribute('download', `${currentRepoName ? currentRepoName.replace('/', '-') : 'repo'}-graph.png`);
+      a.setAttribute('href', dataUrl);
+      a.click();
+    }).catch(err => {
+      console.error('Failed to export graph', err);
+      alert('Failed to export graph image.');
+    });
+  }, [currentRepoName]);
 
   // Content rendering based on active tab
   const renderTabContent = () => {
@@ -287,6 +350,25 @@ export default function App() {
       if (activeTab === 'graph') {
           return (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ height: '100%', width: '100%', position: 'relative' }}>
+                  
+                  {nodes.length > 0 && (
+                      <div style={{ position: 'absolute', top: 20, left: 20, zIndex: 10, display: 'flex', gap: '12px', alignItems: 'center' }}>
+                          <div style={{ position: 'relative' }}>
+                              <Search size={16} style={{ position: 'absolute', left: 10, top: 10, color: 'var(--text-secondary)' }} />
+                              <input 
+                                  type="text" 
+                                  placeholder="Search commits or authors..." 
+                                  value={searchQuery}
+                                  onChange={e => setSearchQuery(e.target.value)}
+                                  style={{ paddingLeft: '32px', width: '280px', background: 'rgba(22, 27, 34, 0.8)', backdropFilter: 'blur(10px)', border: '1px solid var(--border-default)' }}
+                              />
+                          </div>
+                          <button className="btn-secondary" onClick={handleDownloadImage} style={{ background: 'rgba(22, 27, 34, 0.8)', backdropFilter: 'blur(10px)', display: 'flex', alignItems: 'center', gap: '6px', height: '40px' }} title="Export Graph as PNG">
+                              <Download size={16} /> Export Image
+                          </button>
+                      </div>
+                  )}
+
                   {nodes.length > 0 ? (
                       <ReactFlow
                           nodes={nodes}
