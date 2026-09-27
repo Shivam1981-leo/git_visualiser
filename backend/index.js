@@ -77,7 +77,36 @@ app.get('/api/auth/github/callback', async (req, res) => {
 });
 
 
+// --- User Info Endpoint ---
+app.get('/api/auth/user', async (req, res) => {
+    try {
+        const headers = getAuthHeaders(req);
+        if (!headers.Authorization) return res.status(401).json({ error: 'Not authenticated' });
+        
+        const { data } = await axios.get('https://api.github.com/user', { headers });
+        res.json({
+            name: data.name || data.login,
+            login: data.login,
+            avatar_url: data.avatar_url,
+            html_url: data.html_url
+        });
+    } catch (e) {
+        res.status(401).json({ error: 'Failed to fetch user profile' });
+    }
+});
+
 // --- Repo Endpoints ---
+app.get('/api/repo/info', async (req, res) => {
+    const { repoName } = req.query;
+    if (!repoName) return res.status(400).json({ error: 'Repo name is required' });
+    try {
+        const { data } = await axios.get(`https://api.github.com/repos/${repoName}`, { headers: getAuthHeaders(req) });
+        res.json(data);
+    } catch (e) {
+        res.status(500).json({ error: 'Failed to fetch repo info' });
+    }
+});
+
 app.post('/api/repo/clone', async (req, res) => {
   const { url, sessionId } = req.body;
   if (!url) {

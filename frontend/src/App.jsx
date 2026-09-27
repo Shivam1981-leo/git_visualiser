@@ -12,11 +12,15 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import dagre from 'dagre';
-import { GitGraph, Download, X, GitCommit as GitCommitIcon, GitPullRequest, LogIn, LogOut, Activity } from 'lucide-react';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import { 
+    GitGraph, Download, X, GitCommit as GitCommitIcon, 
+    GitPullRequest, LogIn, LogOut, Activity, 
+    PieChart, Info, BookOpen, Star, GitFork, User
+} from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, AreaChart, Area } from 'recharts';
+import { motion, AnimatePresence } from 'framer-motion';
 
 const RAW_API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api';
-// Normalize API base just in case it was set to /api/repo previously
 const API_BASE = RAW_API_BASE.replace(/\/repo\/?$/, '');
 
 // Custom Node Component (GitHub Style)
@@ -108,13 +112,16 @@ export default function App() {
   
   const [sessionId, setSessionId] = useState(null);
   const [currentRepoName, setCurrentRepoName] = useState(null);
+  const [repoInfo, setRepoInfo] = useState(null);
   
   const [selectedCommit, setSelectedCommit] = useState(null);
   const [commitDiff, setCommitDiff] = useState(null);
 
   const [token, setToken] = useState(localStorage.getItem('github_token') || '');
+  const [userProfile, setUserProfile] = useState(null);
 
-  // Handle OAuth callback token
+  const [activeTab, setActiveTab] = useState('overview'); // overview, graph, analytics
+
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const tokenFromUrl = urlParams.get('token');
@@ -130,6 +137,29 @@ export default function App() {
     }
   }, [sessionId]);
 
+  const getHeaders = useCallback(() => {
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }, [token]);
+
+  // Fetch user profile if token exists
+  useEffect(() => {
+      const fetchProfile = async () => {
+          if (!token) {
+              setUserProfile(null);
+              return;
+          }
+          try {
+              const res = await axios.get(`${API_BASE}/auth/user`, { headers: getHeaders() });
+              setUserProfile(res.data);
+          } catch (e) {
+              console.error("Token might be invalid or expired");
+              setToken('');
+              localStorage.removeItem('github_token');
+          }
+      };
+      fetchProfile();
+  }, [token, getHeaders]);
+
   const handleLogin = () => {
     window.location.href = `${API_BASE}/auth/github`;
   };
@@ -137,15 +167,14 @@ export default function App() {
   const handleLogout = () => {
     setToken('');
     localStorage.removeItem('github_token');
-  };
-
-  const getHeaders = () => {
-    return token ? { Authorization: `Bearer ${token}` } : {};
+    setUserProfile(null);
   };
 
   const handleClone = async () => {
     if (!repoUrl || !sessionId) return;
     setLoading(true);
+    setRepoInfo(null);
+    setNodes([]);
     try {
       const res = await axios.post(`${API_BASE}/repo/clone`, 
         { url: repoUrl, sessionId }, 
@@ -154,10 +183,13 @@ export default function App() {
       const repoName = res.data.name;
       setCurrentRepoName(repoName);
       
-      const [graphRes, contribRes] = await Promise.all([
+      const [graphRes, contribRes, infoRes] = await Promise.all([
         axios.get(`${API_BASE}/repo/graph`, { params: { repoName }, headers: getHeaders() }),
-        axios.get(`${API_BASE}/repo/contributors`, { params: { repoName }, headers: getHeaders() })
+        axios.get(`${API_BASE}/repo/contributors`, { params: { repoName }, headers: getHeaders() }),
+        axios.get(`${API_BASE}/repo/info`, { params: { repoName }, headers: getHeaders() }).catch(() => ({data: null}))
       ]);
+      
+      if (infoRes.data) setRepoInfo(infoRes.data);
       
       const formattedNodes = graphRes.data.nodes.map(n => ({
         ...n,
@@ -171,14 +203,16 @@ export default function App() {
       
       const styledEdges = layoutedEdges.map(e => ({
         ...e,
-        style: { stroke: '#30363d', strokeWidth: 2 },
-        animated: false
+        style: { stroke: '#58a6ff', strokeWidth: 1.5, opacity: 0.6 },
+        animated: true
       }));
       
       setNodes(layoutedNodes);
       setEdges(styledEdges);
       setContributors(contribRes.data);
       setAnalytics(graphRes.data.analytics || []);
+      
+      setActiveTab('graph'); // Switch to graph once loaded
       
     } catch (err) {
       console.error(err);
@@ -206,130 +240,214 @@ export default function App() {
     }
   };
 
+  // Content rendering based on active tab
+  const renderTabContent = () => {
+      if (activeTab === 'overview') {
+          return (
+              <motion.div 
+                  initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+                  style={{ padding: '40px', maxWidth: '900px', margin: '0 auto', width: '100%' }}
+              >
+                  {repoInfo ? (
+                      <div className="overview-card">
+                          <h1 style={{ fontSize: '32px', marginBottom: '8px', color: '#fff' }}>{repoInfo.full_name}</h1>
+                          <p style={{ color: 'var(--text-secondary)', fontSize: '16px', marginBottom: '24px' }}>
+                              {repoInfo.description || 'No description provided.'}
+                          </p>
+                          <div className="stats-grid">
+                              <div className="stat-box">
+                                  <div className="stat-value">{repoInfo.stargazers_count}</div>
+                                  <div className="stat-label"><Star size={14} style={{display:'inline', marginRight:'4px'}}/> Stars</div>
+                              </div>
+                              <div className="stat-box">
+                                  <div className="stat-value">{repoInfo.forks_count}</div>
+                                  <div className="stat-label"><GitFork size={14} style={{display:'inline', marginRight:'4px'}}/> Forks</div>
+                              </div>
+                              <div className="stat-box">
+                                  <div className="stat-value">{repoInfo.open_issues_count}</div>
+                                  <div className="stat-label">Open Issues</div>
+                              </div>
+                              <div className="stat-box">
+                                  <div className="stat-value">{repoInfo.language || 'Mixed'}</div>
+                                  <div className="stat-label">Language</div>
+                              </div>
+                          </div>
+                      </div>
+                  ) : (
+                      <div style={{ textAlign: 'center', marginTop: '100px', color: 'var(--text-secondary)' }}>
+                          <BookOpen size={64} style={{ marginBottom: '20px', opacity: 0.5 }} />
+                          <h2>Welcome to Git Visualiser</h2>
+                          <p>Enter a repository URL in the sidebar to get started.</p>
+                      </div>
+                  )}
+              </motion.div>
+          );
+      }
+      
+      if (activeTab === 'graph') {
+          return (
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ flex: 1, position: 'relative' }}>
+                  {nodes.length > 0 ? (
+                      <ReactFlow
+                          nodes={nodes}
+                          edges={edges}
+                          onNodesChange={onNodesChange}
+                          onEdgesChange={onEdgesChange}
+                          onNodeClick={onNodeClick}
+                          nodeTypes={nodeTypes}
+                          fitView
+                      >
+                          <Controls style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border-default)', fill: 'var(--text-primary)' }} />
+                          <Background color="var(--border-default)" gap={20} size={1} />
+                      </ReactFlow>
+                  ) : (
+                      <div style={{display:'flex', height:'100%', alignItems:'center', justifyContent:'center', color:'var(--text-secondary)'}}>
+                          <div style={{textAlign: 'center'}}>
+                              <GitPullRequest size={48} style={{marginBottom: '16px', opacity: 0.5}} />
+                              <p>No graph data loaded.</p>
+                          </div>
+                      </div>
+                  )}
+              </motion.div>
+          );
+      }
+      
+      if (activeTab === 'analytics') {
+          return (
+              <motion.div 
+                  initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
+                  style={{ padding: '40px', maxWidth: '1200px', margin: '0 auto', width: '100%', overflowY: 'auto' }}
+              >
+                  {analytics.length > 0 ? (
+                      <>
+                          <h2 style={{ marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <Activity size={24} color="var(--accent-color)" /> Commit Activity
+                          </h2>
+                          <div className="chart-container">
+                              <ResponsiveContainer width="100%" height="100%">
+                                  <AreaChart data={analytics}>
+                                      <defs>
+                                          <linearGradient id="colorCommits" x1="0" y1="0" x2="0" y2="1">
+                                              <stop offset="5%" stopColor="var(--accent-color)" stopOpacity={0.8}/>
+                                              <stop offset="95%" stopColor="var(--accent-color)" stopOpacity={0}/>
+                                          </linearGradient>
+                                      </defs>
+                                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border-default)" vertical={false} />
+                                      <XAxis dataKey="date" stroke="var(--text-secondary)" fontSize={12} tickLine={false} />
+                                      <Tooltip 
+                                          contentStyle={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-default)', color: 'var(--text-primary)', borderRadius: '8px' }}
+                                      />
+                                      <Area type="monotone" dataKey="commits" stroke="var(--accent-color)" fillOpacity={1} fill="url(#colorCommits)" />
+                                  </AreaChart>
+                              </ResponsiveContainer>
+                          </div>
+                          
+                          <h2 style={{ marginBottom: '20px', marginTop: '40px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <PieChart size={24} color="var(--link-color)" /> Top Contributors
+                          </h2>
+                          <div className="contributors-grid">
+                              {contributors.sort((a,b) => b.commits - a.commits).map((c, i) => (
+                                  <a key={i} href={c.profileUrl} target="_blank" rel="noreferrer" className="contributor-card">
+                                      <img src={c.avatarUrl || `https://github.com/${c.name}.png`} alt={c.name} />
+                                      <div style={{ flex: 1 }}>
+                                          <div style={{ fontWeight: 600, color: 'var(--link-color)' }}>{c.name}</div>
+                                          <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{c.commits} commits</div>
+                                      </div>
+                                  </a>
+                              ))}
+                          </div>
+                      </>
+                  ) : (
+                      <div style={{ textAlign: 'center', marginTop: '100px', color: 'var(--text-secondary)' }}>
+                          <p>Load a repository to see analytics.</p>
+                      </div>
+                  )}
+              </motion.div>
+          );
+      }
+  };
+
   return (
     <div className="app-container">
-      {/* GitHub Style Sidebar */}
-      <div className="sidebar" style={{ width: '320px', overflowY: 'auto' }}>
-        <div className="branding" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      {/* Sidebar */}
+      <div className="sidebar">
+        <div className="branding">
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <GitGraph size={24} />
+            <GitGraph size={24} color="var(--link-color)" />
             <span>Git Visualiser</span>
           </div>
         </div>
         
-        <div className="auth-section" style={{ marginBottom: '20px', padding: '12px', background: 'var(--bg-secondary)', borderRadius: '6px' }}>
-            {token ? (
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontSize: '12px', color: 'var(--text-success)' }}>✓ GitHub Connected</span>
-                    <button onClick={handleLogout} className="btn-secondary" style={{ padding: '4px 8px', fontSize: '12px' }}>
-                        <LogOut size={12} style={{marginRight: '4px'}} /> Logout
+        <div className="sidebar-content">
+            {/* User Profile Area */}
+            {userProfile ? (
+                <div className="user-profile">
+                    <img src={userProfile.avatar_url} alt="avatar" className="user-avatar" />
+                    <div className="user-info">
+                        <a href={userProfile.html_url} target="_blank" rel="noreferrer" className="name" style={{textDecoration:'none'}}>{userProfile.name}</a>
+                        <span className="status"><User size={12}/> Connected</span>
+                    </div>
+                    <button onClick={handleLogout} className="btn-secondary" style={{ marginLeft: 'auto', padding: '6px' }} title="Logout">
+                        <LogOut size={14} />
                     </button>
                 </div>
             ) : (
-                <div>
-                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '8px' }}>Connect GitHub to visualize private repos & get higher rate limits.</p>
-                    <button onClick={handleLogin} className="btn-primary" style={{ width: '100%', background: '#238636', display: 'flex', justifyContent: 'center' }}>
-                        <LogIn size={14} style={{marginRight: '6px'}} /> Login with GitHub
+                <div style={{ marginBottom: '24px', padding: '16px', background: 'var(--bg-secondary)', borderRadius: '12px', border: '1px solid var(--border-default)' }}>
+                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '12px' }}>Connect GitHub to visualize private repos & get higher rate limits.</p>
+                    <button onClick={handleLogin} className="btn-primary" style={{ width: '100%' }}>
+                        <LogIn size={16} /> Login with GitHub
                     </button>
                 </div>
             )}
-        </div>
-        
-        <div className="input-section">
-          <div className="input-group">
-            <label>Repository URL</label>
-            <input 
-              type="text" 
-              placeholder="https://github.com/user/repo"
-              value={repoUrl}
-              onChange={e => setRepoUrl(e.target.value)}
-            />
-          </div>
-          <button className="btn-primary" onClick={handleClone} disabled={loading} style={{ width: '100%' }}>
-            <Download size={16} />
-            {loading ? 'Fetching Repository...' : 'Load Repository'}
-          </button>
-        </div>
-        
-        {contributors.length > 0 && (
-          <div className="stats-section">
-            <h3>Contributors</h3>
-            <div className="contributor-list">
-              {contributors.sort((a,b) => b.commits - a.commits).map((c, i) => (
-                <a key={i} href={c.profileUrl} target="_blank" rel="noreferrer" className="contributor-item" style={{ textDecoration: 'none', color: 'inherit' }}>
-                  <span className="contributor-name" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    {c.avatarUrl ? (
-                        <img src={c.avatarUrl} alt={c.name} style={{ width: '20px', height: '20px', borderRadius: '50%' }} />
-                    ) : (
-                        <div className="avatar"></div>
-                    )}
-                    <span style={{ color: 'var(--link-color)' }}>{c.name}</span>
-                  </span>
-                  <span className="contributor-commits">{c.commits}</span>
-                </a>
-              ))}
+            
+            <div className="input-section">
+                <div className="input-group">
+                    <label>Repository URL</label>
+                    <input 
+                        type="text" 
+                        placeholder="https://github.com/user/repo"
+                        value={repoUrl}
+                        onChange={e => setRepoUrl(e.target.value)}
+                    />
+                </div>
+                <button className="btn-primary" onClick={handleClone} disabled={loading}>
+                    <Download size={16} />
+                    {loading ? 'Fetching...' : 'Load Repository'}
+                </button>
             </div>
-          </div>
-        )}
+        </div>
       </div>
 
-      {/* Main Graph Content */}
-      <div className="main-content" style={{ display: 'flex', flexDirection: 'column' }}>
+      {/* Main Content Area */}
+      <div className="main-content">
         
-        {analytics.length > 0 && (
-            <div className="analytics-panel" style={{ height: '150px', background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border-default)', padding: '16px' }}>
-                <h4 style={{ margin: '0 0 8px 0', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <Activity size={16} color="var(--text-success)" />
-                    Commit Activity (Fetched History)
-                </h4>
-                <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={analytics}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#30363d" vertical={false} />
-                        <XAxis dataKey="date" stroke="#8b949e" fontSize={12} tickLine={false} />
-                        <Tooltip 
-                            contentStyle={{ backgroundColor: '#161b22', borderColor: '#30363d', color: '#c9d1d9' }}
-                            itemStyle={{ color: '#58a6ff' }}
-                        />
-                        <Line type="monotone" dataKey="commits" stroke="#238636" strokeWidth={2} dot={{ r: 3, fill: '#2ea043', strokeWidth: 0 }} />
-                    </LineChart>
-                </ResponsiveContainer>
-            </div>
-        )}
-
-        <div style={{ flex: 1, position: 'relative' }}>
-            {nodes.length > 0 ? (
-            <ReactFlow
-                nodes={nodes}
-                edges={edges}
-                onNodesChange={onNodesChange}
-                onEdgesChange={onEdgesChange}
-                onNodeClick={onNodeClick}
-                nodeTypes={nodeTypes}
-                fitView
-            >
-                <Controls style={{ background: '#161b22', borderColor: '#30363d', fill: '#c9d1d9' }} />
-                <MiniMap 
-                    nodeStrokeColor="#30363d" 
-                    nodeColor="#161b22" 
-                    maskColor="rgba(13,17,23,0.8)"
-                    style={{ backgroundColor: '#0d1117', border: '1px solid #30363d' }}
-                />
-                <Background color="#30363d" gap={20} size={1} />
-            </ReactFlow>
-            ) : (
-            <div style={{display:'flex', height:'100%', alignItems:'center', justifyContent:'center', color:'var(--text-secondary)'}}>
-                <div style={{textAlign: 'center'}}>
-                <GitPullRequest size={48} style={{marginBottom: '16px', opacity: 0.5}} />
-                <p>Enter a Git repository URL to visualize its history.</p>
-                </div>
-            </div>
-            )}
+        {/* Tabs Navigation */}
+        <div className="tabs-header">
+            <button className={`tab-btn ${activeTab === 'overview' ? 'active' : ''}`} onClick={() => setActiveTab('overview')}>
+                <Info size={16} /> Overview
+                {activeTab === 'overview' && <motion.div layoutId="indicator" className="tab-indicator" />}
+            </button>
+            <button className={`tab-btn ${activeTab === 'graph' ? 'active' : ''}`} onClick={() => setActiveTab('graph')}>
+                <GitGraph size={16} /> Network Graph
+                {activeTab === 'graph' && <motion.div layoutId="indicator" className="tab-indicator" />}
+            </button>
+            <button className={`tab-btn ${activeTab === 'analytics' ? 'active' : ''}`} onClick={() => setActiveTab('analytics')}>
+                <Activity size={16} /> Analytics
+                {activeTab === 'analytics' && <motion.div layoutId="indicator" className="tab-indicator" />}
+            </button>
         </div>
 
-        {/* Side Panel for Diff Details */}
+        {/* Tab Content */}
+        <div className="tab-content">
+            <AnimatePresence mode="wait">
+                {renderTabContent()}
+            </AnimatePresence>
+        </div>
+
+        {/* Side Panel for Diff Details (Only relevant for Graph tab) */}
         <div className={`side-panel ${selectedCommit ? 'open' : ''}`}>
           <div className="panel-header">
-            <h2>Commit Details</h2>
+            <h2 style={{ fontSize: '16px' }}>Commit Details</h2>
             <button className="close-btn" onClick={() => setSelectedCommit(null)}>
               <X size={20} />
             </button>
@@ -339,15 +457,17 @@ export default function App() {
             {selectedCommit && (
               <>
                 <div className="commit-meta-box">
-                  <h3 style={{marginBottom: '8px', color: 'var(--text-primary)', fontSize: '18px'}}>
+                  <h3 style={{marginBottom: '12px', color: 'var(--text-primary)', fontSize: '16px', lineHeight: 1.4}}>
                       {selectedCommit.label}
                   </h3>
                   <div style={{display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px'}}>
-                    <div className="avatar"></div>
-                    <span style={{fontWeight: 600, fontSize: '14px'}}>{selectedCommit.author}</span>
-                    <span style={{color: 'var(--text-secondary)', fontSize: '14px'}}>committed on {selectedCommit.date}</span>
+                    <img src={`https://github.com/${selectedCommit.author}.png?size=32`} style={{width:'24px', borderRadius:'50%'}} onError={(e)=>{e.target.style.display='none'}} />
+                    <span style={{fontWeight: 600, fontSize: '13px'}}>{selectedCommit.author}</span>
                   </div>
-                  <div style={{display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--text-secondary)'}}>
+                  <div style={{display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '8px'}}>
+                      <span>committed on {new Date(selectedCommit.date).toLocaleString()}</span>
+                  </div>
+                  <div style={{display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--link-color)'}}>
                     <GitCommitIcon size={14} />
                     <span>{selectedCommit.hash}</span>
                   </div>
@@ -355,8 +475,8 @@ export default function App() {
                 
                 {commitDiff ? (
                   <>
-                    <h4 style={{fontSize: '14px', marginBottom: '8px', color: 'var(--text-primary)'}}>Changed files</h4>
-                    <div className="diff-stat">{commitDiff.summary}</div>
+                    <h4 style={{fontSize: '13px', marginBottom: '8px', color: 'var(--text-secondary)', textTransform: 'uppercase'}}>Changed files</h4>
+                    <div className="diff-stat" style={{fontSize: '12px', color: 'var(--text-primary)', whiteSpace: 'pre-wrap', marginBottom: '16px'}}>{commitDiff.summary}</div>
                     
                     <div className="diff-container">
                       <div className="diff-header">Code Changes</div>
@@ -364,7 +484,11 @@ export default function App() {
                     </div>
                   </>
                 ) : (
-                  <div style={{color: 'var(--text-secondary)'}}>Loading diff...</div>
+                  <div style={{color: 'var(--text-secondary)', display: 'flex', justifyContent: 'center', padding: '40px'}}>
+                      <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }}>
+                          <Activity size={24} />
+                      </motion.div>
+                  </div>
                 )}
               </>
             )}
